@@ -1,40 +1,29 @@
 # Gestão do Escritório · Método D.R.A.
 
-App de gestão para escritórios de advocacia, entregue às mentorandas da Mentoria Método D.R.A.
+Sistema de gestão para escritórios de advocacia, feito para as mentorandas da Mentoria Método D.R.A.
 
-O app funciona no navegador e pode ser instalado no celular como aplicativo. Os dados de cada escritório ficam no Supabase próprio, protegidos por login.
+- **App oficial, com login por convite:** https://advdaianne-collab.github.io/gestao-dra/
+- **Demonstração:** https://advdaianne-collab.github.io/gestao-dra/demo/
 
-Seções:
-- Painel
-- Agenda (quadro com listas)
-- Calendário
-- Processos
-- Clientes
-- Publicações
-- Comunicação (rascunhos de WhatsApp)
-- Documentos
-- Financeiro
-- Relatórios
-- Finalizados
-- Manual
+## Seções
 
-## Pastas
+Painel, Agenda (quadro com listas), Calendário, Finalizados, Processos, Clientes, Publicações, Comunicação, Documentos, Indicadores, Relatórios mensais, Financeiro e Manual.
+
+## Estrutura
 
 | Caminho | O que é |
 |---|---|
-| `app/` | Código do app, compartilhado por todas as mentorandas. Atualize aqui. |
-| `index.html`, `config.js`, `manifest.webmanifest`, `sw.js`, `icones/` | Demonstração com dados de exemplo, que ficam só no navegador. |
-| `modelo-escritorio/` | Pasta modelo: copie para `nome-da-mentoranda/` e preencha o `config.js`. |
-| `supabase/schema.sql` | Estrutura do banco. Rode uma vez no Supabase de cada mentoranda. |
-| `GUIA-IMPLANTACAO.md` | Passo a passo completo. |
+| `app/` | Código do app, compartilhado pelo app oficial, pela demonstração e pela versão artefato |
+| `index.html`, `config.js` | App oficial, ligado ao Supabase (login por convite) |
+| `demo/` | Demonstração com dados de exemplo, guardados só no navegador |
+| `supabase/schema.sql` | Estrutura do banco: tabelas, regras de acesso por escritório e pasta privada de documentos |
+| `GUIA-IMPLANTACAO.md` | Como convidar mentorandas, custos e cuidados |
 
 ## Tecnologia
 
 - HTML, CSS e JavaScript puros, sem etapa de build.
-- supabase-js 2, carregado de um CDN.
-- Login por e-mail e senha.
-- Row Level Security por escritório.
-- Bucket privado `documentos` para os anexos.
-- Sem `supabaseUrl` no `config.js`, o app abre em modo demonstração, com os dados guardados no navegador.
+- Banco e login no Supabase, com regras de acesso (Row Level Security) por escritório.
+- Instalável no celular como aplicativo (PWA).
+- Com `modo: 'artefato'` no config, o mesmo código roda como artefato do Claude, usando o banco do artefato e o assistente com IA.
 
-Versão 1.0.0
+Versão 1.1.0
