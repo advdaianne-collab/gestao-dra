@@ -4,13 +4,17 @@
    abre em modo demonstração, com dados de exemplo guardados só neste navegador. */
 (() => {
 'use strict';
-const VERSAO = '1.0.0';
+const VERSAO = '1.1.0';
 const CFG = Object.assign({
   nome: 'Escritório Modelo', sigla: 'D.R.A.', subtitulo: 'gestão do escritório', rodape: '',
   logo: '', supabaseUrl: '', supabaseChave: ''
 }, window.ESCRITORIO || {});
-const DEMO = !CFG.supabaseUrl || !CFG.supabaseChave;
+// Três modos: artefato do Claude (modo: 'artefato'), banco Supabase (url e chave preenchidas) ou demonstração.
+const ARTEFATO = CFG.modo === 'artefato';
+const DEMO = !ARTEFATO && (!CFG.supabaseUrl || !CFG.supabaseChave);
 const CHAVE = 'dra:' + location.pathname.replace(/index\.html$/, '');
+// Armazenamento local seguro: dentro de artefatos o navegador pode bloquear o localStorage.
+const LS = (() => { try { const k = '__dra'; localStorage.setItem(k, k); localStorage.removeItem(k); return localStorage; } catch { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; } })();
 
 /* ---------------- utilidades ---------------- */
 const TZ = 'America/Sao_Paulo';
@@ -240,11 +244,11 @@ function seedDemo() {
 const Local = {
   db: null,
   salvar() {
-    try { localStorage.setItem(CHAVE + ':demo', JSON.stringify(this.db)); }
+    try { LS.setItem(CHAVE + ':demo', JSON.stringify(this.db)); }
     catch { toast('O navegador ficou sem espaço para a demonstração.'); }
   },
   async init() {
-    try { this.db = JSON.parse(localStorage.getItem(CHAVE + ':demo')); } catch { this.db = null; }
+    try { this.db = JSON.parse(LS.getItem(CHAVE + ':demo')); } catch { this.db = null; }
     if (!this.db) { this.db = seedDemo(); this.salvar(); }
     TABS.forEach(t => this.db[t] = this.db[t] || []);
   },
@@ -257,12 +261,12 @@ const Local = {
     if (file.size > 2 * 1048576) throw new Error('Na demonstração o limite é 2 MB por arquivo. Com o banco ligado, vai até 20 MB.');
     const url = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = no; fr.readAsDataURL(file); });
     const k = 'local:' + uid();
-    try { localStorage.setItem(CHAVE + ':f:' + k, url); } catch { throw new Error('O navegador ficou sem espaço para este arquivo.'); }
+    try { LS.setItem(CHAVE + ':f:' + k, url); } catch { throw new Error('O navegador ficou sem espaço para este arquivo.'); }
     return k;
   },
-  async fileUrl(k) { const u = localStorage.getItem(CHAVE + ':f:' + k); if (!u) throw new Error('Arquivo não encontrado.'); return URL.createObjectURL(await (await fetch(u)).blob()); },
-  async removeFile(k) { localStorage.removeItem(CHAVE + ':f:' + k); },
-  reset() { Object.keys(localStorage).filter(k => k.startsWith(CHAVE + ':')).forEach(k => localStorage.removeItem(k)); }
+  async fileUrl(k) { const u = LS.getItem(CHAVE + ':f:' + k); if (!u) throw new Error('Arquivo não encontrado.'); return URL.createObjectURL(await (await fetch(u)).blob()); },
+  async removeFile(k) { LS.removeItem(CHAVE + ':f:' + k); },
+  reset() { Object.keys(localStorage).filter(k => k.startsWith(CHAVE + ':')).forEach(k => LS.removeItem(k)); }
 };
 
 const Supa = {
@@ -291,12 +295,35 @@ const Supa = {
   async fileUrl(p) { const { data, error } = await this.sb.storage.from('documentos').createSignedUrl(p, 120); if (error) throw error; return data.signedUrl; },
   async removeFile(p) { await this.sb.storage.from('documentos').remove([p]); }
 };
-const Store = DEMO ? Local : Supa;
+// Artefato do Claude: dados no banco do próprio artefato (capability db) e arquivos em assets.
+const Cld = {
+  db: null, assets: null, sample: null,
+  async init() {
+    const espera = p => Promise.race([p, new Promise(ok => setTimeout(() => ok(null), 12000))]);
+    if (!window.claude || !window.claude.use) return false;
+    [this.db, this.assets, this.sample] = await Promise.all([espera(window.claude.use('db')), espera(window.claude.use('assets')), espera(window.claude.use('sample'))]);
+    return !!this.db;
+  },
+  limpar(o) { const x = {}; Object.keys(o).forEach(k => { if (o[k] !== undefined && k !== 'id') x[k] = o[k] === '' ? null : o[k]; }); return x; },
+  async list(t) { const s = await this.db.collection(t).get(); return s.docs.filter(d => d.exists).map(d => Object.assign({}, d.data(), { id: d.id })); },
+  async insert(t, o) { const id = o.id || uid(), r = Object.assign(this.limpar(o), { criado_em: new Date().toISOString() }); await this.db.collection(t).doc(id).set(r); return Object.assign({}, r, { id }); },
+  async update(t, id, p) { const ref = this.db.collection(t).doc(id), r = this.limpar(p); r.atualizado_em = new Date().toISOString(); await ref.update(r); const s = await ref.get(); return Object.assign({}, s.data(), { id }); },
+  async remove(t, id) { await this.db.collection(t).doc(id).delete(); },
+  async upsertMany(t, rows) { for (const r of rows) await this.db.collection(t).doc(r.id || uid()).set(this.limpar(r)); },
+  async upload(file) {
+    if (!this.assets) throw new Error('Anexos indisponíveis aqui. Abra o sistema pela sua conta do Claude.');
+    if (file.size > 20 * 1048576) throw new Error('O limite é 20 MB por arquivo.');
+    const a = await this.assets.upload(file); return a.id;
+  },
+  async fileUrl(id) { return '/_blob/' + id; },
+  async removeFile(id) { if (this.assets) try { await this.assets.delete(id); } catch (e) { console.warn(e); } }
+};
+const Store = ARTEFATO ? Cld : DEMO ? Local : Supa;
 
 /* ---------------- estado ---------------- */
 const S = {}; TABS.forEach(t => S[t] = []);
 let carregado = false, ultimaCarga = 0, tab = 'painel';
-const ui = { av: 'quadro', tipo: 'todos', etq: '', vista: '', q: '', qp: '', qc: '', qd: '', qf: '', fin: 'todos', mf: '', cm: '', cd: '', fz: 'cartoes', enc: false, man: 0, tema: localStorage.getItem(CHAVE + ':tema') || 'auto' };
+const ui = { av: 'quadro', tipo: 'todos', etq: '', vista: '', q: '', qp: '', qc: '', qd: '', qf: '', fin: 'todos', mf: '', cm: '', cd: '', fz: 'cartoes', enc: false, man: 0, tema: LS.getItem(CHAVE + ':tema') || 'auto' };
 
 async function carregarTudo() {
   const res = await Promise.all(TABS.map(t => Store.list(t)));
@@ -420,7 +447,7 @@ V.painel = {
     const m = mesDe(hoje()), aRec = S.financeiro.filter(f => f.tipo === 'recebimento' && f.status === 'pendente' && mesDe(f.vencimento) === m).reduce((a, f) => a + numBR(f.valor), 0);
     const prox = ab.filter(c => { const n = dias(c.data); return n !== null && n >= 0 && n <= 14; }).slice(0, 8);
     const mm = hoje().slice(5, 7), aniv = S.clientes.filter(c => c.nascimento && c.nascimento.slice(5, 7) === mm).sort((a, b) => a.nascimento.slice(8).localeCompare(b.nascimento.slice(8)));
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone && !localStorage.getItem(CHAVE + ':dica');
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone && !LS.getItem(CHAVE + ':dica');
     return `${ios ? `<div class="demo">Para instalar no iPhone: toque em <b>Compartilhar</b> e depois em <b>Adicionar à Tela de Início</b>. <button class="btn sm" ${A('dica')}>Entendi</button></div>` : ''}
     <div class="tiles">
       <button type="button" class="tile ${venc.length ? 'crit' : ''}" ${A('vista', 'venc')}><b>${venc.length}</b><span>Prazos sem baixa</span></button>
@@ -578,6 +605,67 @@ V.financeiro = {
       ${lista(arr, rowF, 'Nenhum lançamento neste mês.', ' Lance honorários e despesas pelo botão acima.')}`;
   }
 };
+/* ---------------- assistente com IA (só na versão artefato do Claude) ---------------- */
+const IA = { msgs: [], ocupado: false, parcial: '' };
+const iaResumo = o => Object.fromEntries(Object.entries(o).filter(([k, v]) => v !== null && v !== '' && v !== undefined && !['criado_em', 'atualizado_em', 'checklist'].includes(k)));
+const IA_TOOLS = [
+  { name: 'consultar', description: 'Busca no sistema: cartões em aberto (prazos, audiências, acompanhamentos), processos, clientes e lançamentos pendentes. Use antes de alterar algo ou para responder perguntas. busca vazia traz um resumo do que vence nos próximos 7 dias.',
+    inputSchema: { type: 'object', properties: { busca: { type: 'string', description: 'Nome do cliente, número do processo ou palavra do título. Vazio = próximos 7 dias.' } } },
+    execute({ busca = '' }) {
+      const q = busca.trim().toLowerCase(), tem = o => !q || JSON.stringify(o).toLowerCase().includes(q);
+      const cart = (q ? abertos().filter(tem) : abertos().filter(c => c.data && dias(c.data) <= 7)).sort(ord).slice(0, 25).map(iaResumo);
+      return { hoje: hoje(), cartoes: cart, processos: q ? S.processos.filter(tem).slice(0, 10).map(iaResumo) : [], clientes: q ? S.clientes.filter(tem).slice(0, 10).map(iaResumo) : [], financeiro_pendente: S.financeiro.filter(f => f.status === 'pendente' && tem(f)).slice(0, 10).map(iaResumo) };
+    } },
+  { name: 'salvar_cartao', description: 'Cria um cartão na agenda: prazo, audiência ou acompanhamento.',
+    inputSchema: { type: 'object', required: ['tipo', 'titulo'], properties: { tipo: { type: 'string', enum: ['prazo', 'audiencia', 'acompanhamento'] }, titulo: { type: 'string' }, data: { type: 'string', description: 'AAAA-MM-DD' }, hora: { type: 'string', description: 'HH:MM' }, processo: { type: 'string' }, cliente: { type: 'string' }, descricao: { type: 'string' }, local: { type: 'string' }, lista: { type: 'string', description: 'Nome de uma lista do quadro, se a pessoa pedir' } } },
+    async execute(i) {
+      const l = i.lista ? listasOrd().find(x => x.nome.toLowerCase() === String(i.lista).toLowerCase()) : null;
+      const r = await salvar('compromissos', null, { tipo: i.tipo, titulo: i.titulo, data: i.data || null, hora: i.hora || null, processo: i.processo || null, cliente: i.cliente || null, descricao: i.descricao || null, local: i.local || null, lista: l ? l.id : null, etiquetas: i.tipo === 'prazo' ? ['conferencia'] : [], checklist: [], prioridade: 'normal', status: 'aberto' });
+      return { ok: true, id: r.id };
+    } },
+  { name: 'dar_baixa', description: 'Marca um cartão como cumprido, com o resumo do que foi feito. Use o id que veio de consultar.',
+    inputSchema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, resumo: { type: 'string' } } },
+    async execute({ id, resumo }) { if (!S.compromissos.find(c => c.id === id)) throw new Error('Cartão não encontrado.'); await salvar('compromissos', id, { status: 'feito', baixa_em: hoje(), feito_resumo: resumo || null }); return { ok: true }; } },
+  { name: 'salvar_cliente', description: 'Cadastra um cliente novo.',
+    inputSchema: { type: 'object', required: ['nome'], properties: { nome: { type: 'string' }, whatsapp: { type: 'string' }, email: { type: 'string' }, cpf_cnpj: { type: 'string' }, obs: { type: 'string' } } },
+    async execute(i) { const r = await salvar('clientes', null, iaResumo(i)); return { ok: true, id: r.id }; } },
+  { name: 'salvar_processo', description: 'Cadastra um processo novo.',
+    inputSchema: { type: 'object', required: ['titulo'], properties: { titulo: { type: 'string' }, numero: { type: 'string' }, cliente: { type: 'string' }, parte_contraria: { type: 'string' }, orgao: { type: 'string' }, area: { type: 'string' }, fase: { type: 'string' } } },
+    async execute(i) { const r = await salvar('processos', null, Object.assign({ situacao: 'ativo' }, iaResumo(i))); return { ok: true, id: r.id }; } },
+  { name: 'lancar_financeiro', description: 'Lança um recebimento (honorários) ou uma despesa.',
+    inputSchema: { type: 'object', required: ['tipo', 'valor'], properties: { tipo: { type: 'string', enum: ['recebimento', 'despesa'] }, valor: { type: 'number' }, descricao: { type: 'string' }, cliente: { type: 'string' }, vencimento: { type: 'string', description: 'AAAA-MM-DD' } } },
+    async execute(i) { const r = await salvar('financeiro', null, Object.assign({ status: 'pendente' }, iaResumo(i))); return { ok: true, id: r.id }; } },
+  { name: 'rascunhar_mensagem', description: 'Guarda em Comunicação um rascunho de mensagem para o cliente. Nunca envia: a advogada revisa e envia.',
+    inputSchema: { type: 'object', required: ['texto'], properties: { cliente: { type: 'string' }, processo: { type: 'string' }, texto: { type: 'string' } } },
+    async execute(i) { const r = await salvar('comunicacoes', null, { data: hoje(), canal: 'WhatsApp', status: 'rascunho', cliente: i.cliente || null, processo: i.processo || null, texto: i.texto }); return { ok: true, id: r.id }; } }
+];
+const iaInstrucoes = () => `Você é o assistente do sistema de gestão do escritório de advocacia "${CFG.nome}" (Método D.R.A.). Hoje é ${hoje()} (${fdia(hoje())}), fuso de Brasília. Responda em português do Brasil, de forma curta e direta.
+Use as ferramentas para consultar e registrar. Antes de dar baixa ou alterar, consulte para achar o id certo. Quando faltar um dado essencial (por exemplo a data de um prazo), pergunte. Datas sempre em AAAA-MM-DD nas ferramentas e em DD/MM/AAAA nas respostas.
+Prazos processuais: lembre que a data lançada é apoio e deve ser conferida no sistema do tribunal. Nunca invente número de processo, data ou valor. Mensagens para clientes ficam só como rascunho.`;
+V.assistente = {
+  nome: 'Assistente', body() {
+    if (!Cld.sample) return vazio('O assistente funciona na versão do sistema dentro do Claude.', '');
+    const bolha = m => `<div class="ia-m ${m.role === 'user' ? 'eu' : 'ia'}">${esc(m.content).replace(/\n/g, '<br>')}</div>`;
+    const lista = IA.msgs.slice(2).map(bolha).join('') + (IA.ocupado ? `<div class="ia-m ia">${IA.parcial ? esc(IA.parcial).replace(/\n/g, '<br>') : 'Pensando…'}</div>` : '');
+    return `<p class="note">Peça em linguagem natural. Exemplos: "o que vence esta semana?", "lança prazo de contestação do João Fictício para dia 10", "dá baixa na réplica da Maria, protocolada hoje", "rascunha uma atualização para o Comércio Modelo".</p>
+      <div class="ia-chat" id="iachat">${lista || '<div class="empty">Nenhuma conversa ainda.</div>'}</div>
+      <div class="ia-in"><textarea id="ia-txt" rows="2" placeholder="Escreva seu pedido…" ${IA.ocupado ? 'disabled' : ''}></textarea><button class="btn pri" ${A('ia')} ${IA.ocupado ? 'disabled' : ''}>Enviar</button>${IA.msgs.length ? `<button class="btn" ${A('ialimpa')}>Nova conversa</button>` : ''}</div>`;
+  }
+};
+async function iaEnviar() {
+  const t = ($('#ia-txt') || {}).value; if (!t || !t.trim() || IA.ocupado) return;
+  if (!IA.msgs.length) IA.msgs.push({ role: 'user', content: iaInstrucoes() }, { role: 'assistant', content: 'Entendido. Como posso ajudar?' });
+  IA.msgs.push({ role: 'user', content: t.trim() }); IA.ocupado = true; IA.parcial = ''; render();
+  const rola = () => { const c = $('#iachat'); if (c) c.scrollTop = c.scrollHeight; }; rola();
+  try {
+    const r = await Cld.sample(IA.msgs, { tools: IA_TOOLS, cache: false, onText: ({ text }) => { IA.parcial = text; const c = $('#iachat'); if (c && c.lastElementChild) { c.lastElementChild.innerHTML = esc(text).replace(/\n/g, '<br>'); rola(); } } });
+    IA.msgs.push({ role: 'assistant', content: r.text || '(sem resposta)' });
+  } catch (e) {
+    IA.msgs.push({ role: 'assistant', content: e && e.code === 'rate_limited' ? 'Muitos pedidos seguidos. Espere um minuto e tente de novo.' : e && e.code === 'not_granted' ? 'O assistente não foi autorizado neste artefato.' : 'Não consegui responder agora: ' + erroMsg(e) });
+  }
+  IA.ocupado = false; IA.parcial = ''; if (tab === 'assistente') { render(); rola(); }
+}
+
 /* ---------------- relatórios mensais (um rascunho de mensagem por cliente) ---------------- */
 const SEMCLI = 'Sem cliente vinculado';
 const feitos = () => S.compromissos.filter(c => c.status === 'feito');
@@ -661,7 +749,7 @@ V.ajustes = {
   nome: 'Ajustes', body() {
     const email = Supa.user ? Supa.user.email : '';
     return `<div class="list">
-      <div class="row"><div class="when">Escritório</div><div class="main"><strong>${esc(CFG.nome)}</strong><div class="meta"><span>${DEMO ? 'Modo demonstração: dados só neste navegador' : 'Conectado ao banco do escritório'}</span>${email ? `<span>${esc(email)}</span>` : ''}<span>Versão ${VERSAO}</span></div></div><div class="side"><div class="acts">${DEMO ? '' : `<button class="btn sm" ${A('senha')}>Trocar senha</button><button class="btn sm danger" ${A('sair')}>Sair</button>`}</div></div></div>
+      <div class="row"><div class="when">Escritório</div><div class="main"><strong>${esc(CFG.nome)}</strong><div class="meta"><span>${DEMO ? 'Modo demonstração: dados só neste navegador' : ARTEFATO ? 'Dados guardados na sua conta do Claude' : 'Conectado ao banco do escritório'}</span>${email ? `<span>${esc(email)}</span>` : ''}<span>Versão ${VERSAO}</span></div></div><div class="side"><div class="acts">${DEMO || ARTEFATO ? '' : `<button class="btn sm" ${A('renesc')}>Renomear</button><button class="btn sm" ${A('senha')}>Trocar senha</button><button class="btn sm danger" ${A('sair')}>Sair</button>`}</div></div></div>
       <div class="row"><div class="when">Aparência</div><div class="main"><div class="tools">${[['auto', 'Automático'], ['claro', 'Claro'], ['escuro', 'Escuro']].map(([k, t]) => `<button class="chip" aria-pressed="${ui.tema === k}" ${A('tema', k)}>${t}</button>`).join('')}</div></div></div>
       <div class="row"><div class="when">Backup</div><div class="main"><p class="txt">Baixe um arquivo com todos os cadastros. Faça isso toda semana e guarde num lugar seguro. Os arquivos anexados não entram no backup: eles ficam na pasta privada do banco.</p></div><div class="side"><div class="acts"><button class="btn sm" ${A('exportar')}>Exportar backup</button><button class="btn sm" ${A('importar')}>Importar backup</button></div></div></div>
       <div class="row"><div class="when">Ícone do app</div><div class="main"><p class="txt">Escolha a logo quadrada do escritório (ideal 1024 × 1024 px). O sistema gera os arquivos do ícone para a tela de início do celular. Envie esses arquivos para quem cuida da implantação.</p><div class="tools"><label class="f" style="flex:1 1 220px">Cor de fundo do ícone<input type="color" id="ic-cor" value="#1A1A1A" style="height:40px;padding:2px;background:none;border:0"></label><label class="chk"><input type="checkbox" id="ic-mold" checked> Deixar margem (recomendado para Android)</label></div></div><div class="side"><div class="acts"><button class="btn sm" ${A('icones')}>Gerar ícones</button></div></div></div>
@@ -692,7 +780,7 @@ function badges() {
 const marcaHTML = () => `<div class="marca">${CFG.logo ? `<img src="${esc(CFG.logo)}" alt="">` : `<span class="sigla">${esc(CFG.sigla)}</span>`}<span class="nome">${esc(CFG.nome)}</span></div>`;
 function montarShell() {
   document.body.innerHTML = `<div class="app"><aside class="sidebar">${marcaHTML()}<p class="eyebrow">${esc(CFG.subtitulo)}</p><div class="rule" role="presentation"></div><nav aria-label="Seções"><div id="nav"></div></nav><p class="sub">${CFG.rodape ? esc(CFG.rodape) + '<br>' : ''}<span id="hojeTxt"></span></p></aside>
-    <div class="wrap"><h1 class="pg" id="pg"></h1>${DEMO ? '<div class="demo"><b>Modo demonstração.</b> Os dados são de exemplo e ficam só neste navegador. Para usar de verdade, ligue o banco do escritório (veja o guia de implantação).</div>' : ''}<main id="view" class="sec"></main></div></div>
+    <div class="wrap"><h1 class="pg" id="pg"></h1>${DEMO ? '<div class="demo"><b>Demonstração do sistema de gestão do Método D.R.A.</b> Os dados são de exemplo e ficam só neste navegador: pode clicar e testar à vontade.</div>' : ''}<main id="view" class="sec"></main></div></div>
     <nav id="tabbar" aria-label="Navegação principal"></nav>
     <div id="mais" hidden><div class="fundo" ${A('maisfecha')}></div><div class="folha" role="dialog" aria-label="Todas as seções"><div class="alca"></div><div class="tit">Todas as seções</div><div id="mais-in"></div></div></div>
     <dialog id="dlg"></dialog><div id="toast" role="status" hidden></div><input type="file" id="arqImport" accept="application/json,.json" hidden><input type="file" id="arqIcone" accept="image/*" hidden>`;
@@ -703,7 +791,7 @@ function render() {
   const bd = badges();
   $('#nav').innerHTML = NAV.map(([g, it]) => `<div class="grp">${g}</div>` + it.map(([k, t]) => `<a href="#${k}"${k === tab ? ' aria-current="page"' : ''}><span>${t}</span>${bd[k] || ''}</a>`).join('')).join('');
   $('#mais-in').innerHTML = NAV.map(([g, it]) => `<div class="grp">${g}</div><div class="lks">` + it.map(([k, t]) => `<a href="#${k}"${k === tab ? ' aria-current="page"' : ''}><span>${t}</span>${bd[k] || ''}</a>`).join('') + '</div>').join('');
-  const tb = ['painel', 'agenda', 'calendario', 'processos'];
+  const tb = ARTEFATO && Cld.sample ? ['painel', 'agenda', 'assistente', 'calendario'] : ['painel', 'agenda', 'calendario', 'processos'];
   $('#tabbar').innerHTML = tb.map(k => `<a href="#${k}"${k === tab ? ' aria-current="page"' : ''}><span class="ic">${ICON[k]}</span>${V[k].nome}${bd[k] || ''}</a>`).join('') + `<button type="button" ${A('maisabre')}${tb.includes(tab) ? '' : ' aria-current="page"'}><span class="ic">${ICON.mais}</span>Mais</button>`;
   $('#hojeTxt').textContent = fdia(hoje()) + ', ' + fdata(hoje());
   $('#pg').textContent = V[tab].nome;
@@ -914,6 +1002,8 @@ async function acao(n, a, b, el) {
       case 'dia': ui.cd = a; if (mesDe(a) !== ui.cm) ui.cm = mesDe(a); return render();
       case 'mes': ui.cm = +a === 0 ? mesDe(hoje()) : somaMes(ui.cm, +a); if (+a === 0) ui.cd = hoje(); return render();
       case 'mesfin': ui.mf = somaMes(ui.mf, +a); return render();
+      case 'ia': return iaEnviar();
+      case 'ialimpa': IA.msgs = []; return render();
       case 'mesrel': ui.mr = somaMes(ui.mr, +a); return render();
       case 'copiarel': { const n = $('#rel-' + a); return copiar(n ? n.textContent : ''); }
       case 'salvarel': { const n = $('#rel-' + a); await salvar('comunicacoes', null, { data: hoje(), cliente: b, canal: 'WhatsApp', texto: n ? n.textContent : '', status: 'rascunho' }); toast('Rascunho guardado em Comunicação.'); return render(); }
@@ -933,16 +1023,17 @@ async function acao(n, a, b, el) {
       case 'cadcli': return abrirForm('clientes', null, { nome: a });
       case 'abrirdoc': return abrirDoc(a);
       case 'man': ui.man = +a; return render();
-      case 'tema': ui.tema = a; localStorage.setItem(CHAVE + ':tema', a); aplicarTema(); return render();
+      case 'tema': ui.tema = a; LS.setItem(CHAVE + ':tema', a); aplicarTema(); return render();
       case 'exportar': return exportar();
       case 'importar': return $('#arqImport').click();
       case 'icones': return $('#arqIcone').click();
-      case 'dica': localStorage.setItem(CHAVE + ':dica', '1'); return render();
+      case 'dica': LS.setItem(CHAVE + ':dica', '1'); return render();
       case 'resetdemo': if (confirm('Apagar tudo o que foi lançado na demonstração e voltar aos exemplos?')) { Local.reset(); location.reload(); } return;
       case 'chkadd': { const box = $('#chkb'); box.insertAdjacentHTML('beforeend', chkLinha({ t: '', ok: false })); box.lastElementChild.querySelector('input[type=text]').focus(); return; }
       case 'chkdel': el.closest('.chkl').remove(); return;
       case 'senha': return dialogoSimples('Trocar senha', `<label class="f">Nova senha (mínimo 8 caracteres)<input type="password" name="s1" autocomplete="new-password" required minlength="8"></label><label class="f">Repita a nova senha<input type="password" name="s2" autocomplete="new-password" required></label>`,
         async f => { if (f.s1.value.length < 8) throw new Error('A senha precisa ter pelo menos 8 caracteres.'); if (f.s1.value !== f.s2.value) throw new Error('As senhas não conferem.'); const { error } = await Supa.sb.auth.updateUser({ password: f.s1.value }); if (error) throw error; toast('Senha trocada.'); });
+      case 'renesc': return renomearEscritorio(false);
       case 'sair': if (confirm('Sair do sistema neste aparelho?')) { await Supa.sb.auth.signOut(); location.reload(); } return;
     }
   } catch (e) { console.error(e); toast(erroMsg(e)); }
@@ -986,7 +1077,7 @@ function telaLogin(modo = 'entrar', msg = '') {
   document.body.innerHTML = `<div class="login"><div class="caixa">${marcaHTML()}<p class="eyebrow">${esc(CFG.subtitulo)}</p><div class="rule"></div>
     ${modo === 'entrar' ? `<form id="fl"><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><label class="f">Senha<input type="password" name="senha" autocomplete="current-password" required></label><p class="err"${msg ? '' : ' hidden'}>${esc(msg)}</p><button class="btn pri" type="submit">Entrar</button></form><button class="lnk" id="esq" type="button">Esqueci a senha</button>`
     : modo === 'esqueci' ? `<form id="fe"><p class="note">Digite seu e-mail. Você vai receber um link para criar uma senha nova.</p><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Enviar link</button></form><button class="lnk" id="volta" type="button">Voltar</button>`
-    : `<form id="fn"><p class="note">Crie sua senha nova (mínimo 8 caracteres).</p><label class="f">Nova senha<input type="password" name="s1" autocomplete="new-password" required minlength="8"></label><label class="f">Repita<input type="password" name="s2" autocomplete="new-password" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Salvar e entrar</button></form>`}
+    : `<form id="fn"><p class="note">${/type=invite/.test(location.hash) ? 'Bem-vinda! Crie sua senha de acesso (mínimo 8 caracteres).' : 'Crie sua senha nova (mínimo 8 caracteres).'}</p><label class="f">Nova senha<input type="password" name="s1" autocomplete="new-password" required minlength="8"></label><label class="f">Repita<input type="password" name="s2" autocomplete="new-password" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Salvar e entrar</button></form>`}
     </div></div><div id="toast" role="status" hidden></div>`;
   const err = m => { const p = document.querySelector('.err'); p.textContent = m; p.hidden = false; };
   const f = document.querySelector('form');
@@ -1008,8 +1099,10 @@ async function iniciarOnline() {
   document.body.innerHTML = '<div class="carregando">Abrindo o escritório…</div>';
   try {
     const { data: u } = await Supa.sb.auth.getUser(); Supa.user = u && u.user;
-    const { data, error } = await Supa.sb.rpc('garantir_escritorio', { nome_escritorio: CFG.nome });
+    const { data, error } = await Supa.sb.rpc('garantir_escritorio', { nome_escritorio: 'Meu escritório' });
     if (error) throw error; Supa.esc = data;
+    const { data: e } = await Supa.sb.from('escritorios').select('nome').eq('id', data).single();
+    if (e && e.nome) CFG.nome = e.nome;
     await carregarTudo();
   } catch (e) {
     console.error(e);
@@ -1017,16 +1110,32 @@ async function iniciarOnline() {
     return;
   }
   montarShell(); tab = location.hash.slice(1) || 'painel'; render();
+  if (CFG.nome === 'Meu escritório') renomearEscritorio(true);
+}
+function renomearEscritorio(primeira) {
+  dialogoSimples(primeira ? 'Bem-vinda! Qual é o nome do seu escritório?' : 'Nome do escritório', `<label class="f">Nome do escritório<input name="nome" value="${esc(CFG.nome === 'Meu escritório' ? '' : CFG.nome)}" required placeholder="Ex.: Souza & Lima Advocacia"></label><p class="note">Aparece no menu e nos relatórios enviados aos clientes. Dá para mudar depois em Ajustes.</p>`, async f => {
+    const nome = f.nome.value.trim(); if (!nome) throw new Error('Digite o nome do escritório.');
+    const { error } = await Supa.sb.from('escritorios').update({ nome }).eq('id', Supa.esc); if (error) throw error;
+    CFG.nome = nome; document.querySelectorAll('.marca .nome').forEach(n => n.textContent = nome); toast('Nome salvo.');
+  });
 }
 
 /* ---------------- início ---------------- */
 async function iniciar() {
   aplicarTema();
+  if (ARTEFATO) {
+    document.body.innerHTML = '<div class="carregando">Abrindo o escritório…</div>';
+    const ok = await Cld.init().catch(() => false);
+    if (!ok) { document.body.innerHTML = '<div class="carregando">Não consegui abrir o banco de dados do sistema. Abra este artefato pela sua conta do Claude (claude.ai), conectada à internet.</div>'; return; }
+    try { await carregarTudo(); } catch (e) { console.error(e); document.body.innerHTML = `<div class="carregando">Não consegui carregar os dados: ${esc(erroMsg(e))}</div>`; return; }
+    if (Cld.sample) { NAV[0][1].splice(1, 0, ['assistente', 'Assistente']); ICON.assistente = '<svg viewBox="0 0 24 24"><path d="M4 5.5h16v10H9l-5 4z"/><path d="M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01"/></svg>'; }
+    montarShell(); tab = location.hash.slice(1) || 'painel'; render(); return;
+  }
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (DEMO) { await Local.init(); await carregarTudo(); montarShell(); tab = location.hash.slice(1) || 'painel'; render(); return; }
   if (!window.supabase) { document.body.innerHTML = '<div class="carregando">Sem conexão com a internet. Abra de novo quando estiver online.</div>'; return; }
   Supa.sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseChave, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: CHAVE + ':auth' } });
-  let recuperando = /type=recovery/.test(location.hash);
+  let recuperando = /type=(recovery|invite)/.test(location.hash);
   Supa.sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY') { recuperando = true; telaLogin('nova'); } });
   const { data: { session } } = await Supa.sb.auth.getSession();
   if (recuperando && session) return telaLogin('nova');
