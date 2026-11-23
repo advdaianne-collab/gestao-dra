@@ -62,8 +62,20 @@ begin
   delete from auth.users where lower(email) = lower(alvo);
 end $$;
 
-revoke execute on function public.lista_acessos(), public.remover_acesso(text) from anon, public;
-grant execute on function public.sou_admin(), public.lista_acessos(), public.remover_acesso(text) to authenticated;
+-- Senha provisória: a administradora define uma senha para quem esqueceu (sem depender de e-mail).
+create or replace function public.redefinir_senha(alvo text, nova text)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not public.sou_admin() then raise exception 'Somente a administradora pode definir senhas.'; end if;
+  if length(coalesce(nova, '')) < 8 then raise exception 'A senha precisa ter pelo menos 8 caracteres.'; end if;
+  update auth.users set encrypted_password = extensions.crypt(nova, extensions.gen_salt('bf')),
+    email_confirmed_at = coalesce(email_confirmed_at, now()), updated_at = now()
+  where lower(email) = lower(alvo);
+  if not found then raise exception 'Ela ainda não criou o acesso. Peça para usar "Primeiro acesso".'; end if;
+end $$;
+
+revoke execute on function public.lista_acessos(), public.remover_acesso(text), public.redefinir_senha(text, text) from anon, public;
+grant execute on function public.sou_admin(), public.lista_acessos(), public.remover_acesso(text), public.redefinir_senha(text, text) to authenticated;
 
 -- Administradora (troque pelo e-mail dela):
 -- insert into public.administradoras (email) values ('email@exemplo.com') on conflict do nothing;
