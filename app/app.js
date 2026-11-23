@@ -673,6 +673,53 @@ async function iaEnviar() {
   IA.ocupado = false; IA.parcial = ''; if (tab === 'assistente') { render(); rola(); }
 }
 
+/* ---------------- kit Claude (prompts, skills e agendamentos) ---------------- */
+const KIT = { itens: null, erro: '' };
+async function carregarKit() {
+  const { data, error } = await Supa.sb.from('kit_itens').select('*').order('ordem').order('titulo');
+  if (error) { KIT.erro = erroMsg(error); KIT.itens = []; } else { KIT.erro = ''; KIT.itens = data || []; }
+  if (tab === 'kit') render();
+}
+async function baixarKit(caminho) {
+  const w = window.open('', '_blank');
+  try {
+    const { data, error } = await Supa.sb.storage.from('kit').createSignedUrl(caminho, 300, { download: caminho.split('/').pop() });
+    if (error) throw error;
+    if (w) w.location.href = data.signedUrl; else location.href = data.signedUrl;
+  } catch (e) { if (w) w.close(); toast(erroMsg(e)); }
+}
+async function atualizarKit(files) {
+  let n = 0, man = null;
+  for (const f of files) {
+    if (/manifesto.*\.json$/i.test(f.name)) { man = JSON.parse(await f.text()); continue; }
+    const { error } = await Supa.sb.storage.from('kit').upload(f.name, f, { upsert: true, contentType: f.type || 'application/octet-stream' });
+    if (error) throw error; n++;
+  }
+  if (man) {
+    const itens = (man.itens || man).map((x, i) => Object.assign({ ordem: i + 1 }, x, { atualizado_em: new Date().toISOString() }));
+    const { error: e1 } = await Supa.sb.from('kit_itens').delete().neq('id', '__nada__'); if (e1) throw e1;
+    const { error: e2 } = await Supa.sb.from('kit_itens').insert(itens); if (e2) throw e2;
+  }
+  return { arquivos: n, itens: man ? (man.itens || man).length : 0 };
+}
+V.kit = {
+  nome: 'Kit Claude', body() {
+    if (KIT.itens === null) { carregarKit(); return vazio('Carregando o kit…', ''); }
+    const it = KIT.itens, por = t => it.filter(x => x.tipo === t);
+    const bloco = x => `<div class="row u-info"><div class="main"><strong>${esc(x.titulo)}</strong>${x.grupo ? `<div class="meta"><span>${esc(x.grupo)}</span></div>` : ''}${x.descricao ? `<p class="txt">${esc(x.descricao)}</p>` : ''}</div>
+      <div class="side"><div class="acts">${x.conteudo ? `<button class="btn sm${x.tipo === 'prompt' ? ' pri' : ''}" ${A('kitcopia', x.id)}>Copiar texto</button>` : ''}${x.arquivo ? `<button class="btn sm" ${A('kitbaixa', x.arquivo)}>Baixar</button>` : ''}</div></div></div>`;
+    const grupos = [...new Set(por('skill').map(x => x.grupo || 'Outras'))];
+    const adm = Supa.admin ? `<div class="sec-h"><h2>Atualizar o kit</h2></div><div class="row u-mute"><div class="main"><p class="txt">Só você vê esta parte. Envie os arquivos .zip das skills, o arquivo do sistema e o <b>kit-manifesto.json</b> (a lista do que aparece aqui). Arquivos com o mesmo nome são substituídos.</p></div><div class="side"><div class="acts"><button class="btn sm" ${A('kitenvia')}>Enviar arquivos</button></div></div></div><input type="file" id="kitArq" multiple hidden>` : '';
+    return `<p class="note">O sistema funciona sozinho, sem precisar do Claude. Se você usa o <b>Claude no computador</b> e quer o sistema dentro dele (com assistente de IA, as skills do Método D.R.A. e as tarefas automáticas, como a varredura do DJEN), siga os passos abaixo. Comece pelo <b>prompt geral</b>: ele instala tudo de uma vez.</p>
+      ${KIT.erro ? `<p class="note" style="color:var(--crit)">${esc(KIT.erro)}</p>` : ''}
+      ${it.length ? '' : '<div class="empty"><b>O kit ainda está sendo preparado.</b> Volte em breve.</div>'}
+      ${por('pacote').length || por('prompt').length || por('sistema').length ? `<div class="sec-h"><h2>Comece por aqui</h2></div><div class="list">${[...por('pacote'), ...por('prompt'), ...por('sistema')].map(bloco).join('')}</div>` : ''}
+      ${grupos.map(g => `<div class="sec-h"><h2>Skills · ${esc(g)}</h2></div><div class="list">${por('skill').filter(x => (x.grupo || 'Outras') === g).map(bloco).join('')}</div>`).join('')}
+      ${por('agendamento').length ? `<div class="sec-h"><h2>Tarefas agendadas</h2></div><div class="list">${por('agendamento').map(bloco).join('')}</div>` : ''}
+      ${adm}`;
+  }
+};
+
 /* ---------------- acessos (só a administradora) ---------------- */
 const AC = { lista: null, erro: '' };
 async function carregarAcessos() {
@@ -1049,6 +1096,13 @@ async function acao(n, a, b, el) {
       case 'dia': ui.cd = a; if (mesDe(a) !== ui.cm) ui.cm = mesDe(a); return render();
       case 'mes': ui.cm = +a === 0 ? mesDe(hoje()) : somaMes(ui.cm, +a); if (+a === 0) ui.cd = hoje(); return render();
       case 'mesfin': ui.mf = somaMes(ui.mf, +a); return render();
+      case 'kitcopia': { const x = (KIT.itens || []).find(k => k.id === a); return copiar(x ? x.conteudo : ''); }
+      case 'kitbaixa': return baixarKit(a);
+      case 'kitenvia': {
+        const inp = $('#kitArq'); inp.value = '';
+        inp.onchange = async () => { if (!inp.files.length) return; toast('Enviando o kit…'); try { const r = await atualizarKit([...inp.files]); toast(`Kit atualizado: ${r.arquivos} arquivo(s) e ${r.itens} item(ns).`); KIT.itens = null; render(); } catch (e) { toast(erroMsg(e)); } };
+        return inp.click();
+      }
       case 'acmsg': { const x = AC.lista[+a]; return copiar(msgConvite(x.nome, x.email)); }
       case 'acsenha': {
         const x = AC.lista[+a];
@@ -1183,6 +1237,7 @@ async function iniciarOnline() {
     const { data: adm } = await Supa.sb.rpc('sou_admin');
     Supa.admin = adm === true;
     if (Supa.admin && !NAV[NAV.length - 1][1].some(x => x[0] === 'acessos')) NAV[NAV.length - 1][1].unshift(['acessos', 'Acessos']);
+    if (!NAV[NAV.length - 1][1].some(x => x[0] === 'kit')) NAV[NAV.length - 1][1].splice(NAV[NAV.length - 1][1].findIndex(x => x[0] === 'manual') + 1, 0, ['kit', 'Kit Claude']);
     await carregarTudo();
   } catch (e) {
     console.error(e);
