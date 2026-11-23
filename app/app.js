@@ -706,7 +706,7 @@ V.kit = {
   nome: 'Kit Claude', body() {
     if (KIT.itens === null) { carregarKit(); return vazio('Carregando o kit…', ''); }
     const it = KIT.itens, por = t => it.filter(x => x.tipo === t);
-    const bloco = x => `<div class="row u-info"><div class="main"><strong>${esc(x.titulo)}</strong>${x.grupo ? `<div class="meta"><span>${esc(x.grupo)}</span></div>` : ''}${x.descricao ? `<p class="txt">${esc(x.descricao)}</p>` : ''}</div>
+    const bloco = x => `<div class="row kit u-info"><div class="main"><strong>${esc(x.titulo)}</strong>${x.grupo ? `<div class="meta"><span>${esc(x.grupo)}</span></div>` : ''}${x.descricao ? `<p class="txt">${esc(x.descricao)}</p>` : ''}</div>
       <div class="side"><div class="acts">${x.conteudo ? `<button class="btn sm${x.tipo === 'prompt' ? ' pri' : ''}" ${A('kitcopia', x.id)}>Copiar texto</button>` : ''}${x.arquivo ? `<button class="btn sm" ${A('kitbaixa', x.arquivo)}>Baixar</button>` : ''}</div></div></div>`;
     const grupos = [...new Set(por('skill').map(x => x.grupo || 'Outras'))];
     const adm = Supa.admin ? `<div class="sec-h"><h2>Atualizar o kit</h2></div><div class="row u-mute"><div class="main"><p class="txt">Só você vê esta parte. Envie os arquivos .zip das skills, o arquivo do sistema e o <b>kit-manifesto.json</b> (a lista do que aparece aqui). Arquivos com o mesmo nome são substituídos.</p></div><div class="side"><div class="acts"><button class="btn sm" ${A('kitenvia')}>Enviar arquivos</button></div></div></div><input type="file" id="kitArq" multiple hidden>` : '';
