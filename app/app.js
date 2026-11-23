@@ -15,6 +15,9 @@ const DEMO = !ARTEFATO && (!CFG.supabaseUrl || !CFG.supabaseChave);
 const CHAVE = 'dra:' + location.pathname.replace(/index\.html$/, '');
 // Armazenamento local seguro: dentro de artefatos o navegador pode bloquear o localStorage.
 const LS = (() => { try { const k = '__dra'; localStorage.setItem(k, k); localStorage.removeItem(k); return localStorage; } catch { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; } })();
+// Logo do escritório: a última usada neste aparelho já aparece na tela de entrada.
+CFG.logoPadrao = CFG.logo;
+if (!ARTEFATO && !DEMO) { const l = LS.getItem(CHAVE + ':logo'); if (l) { CFG.logo = l; CFG.logoCliente = true; } }
 
 /* ---------------- utilidades ---------------- */
 const TZ = 'America/Sao_Paulo';
@@ -793,7 +796,7 @@ V.ajustes = {
   nome: 'Ajustes', body() {
     const email = Supa.user ? Supa.user.email : '';
     return `<div class="list">
-      <div class="row"><div class="when">Escritório</div><div class="main"><strong>${esc(CFG.nome)}</strong><div class="meta"><span>${DEMO ? 'Modo demonstração: dados só neste navegador' : ARTEFATO ? 'Dados guardados na sua conta do Claude' : 'Conectado ao banco do escritório'}</span>${email ? `<span>${esc(email)}</span>` : ''}<span>Versão ${VERSAO}</span></div></div><div class="side"><div class="acts">${DEMO || ARTEFATO ? '' : `<button class="btn sm" ${A('renesc')}>Renomear</button><button class="btn sm" ${A('senha')}>Trocar senha</button><button class="btn sm danger" ${A('sair')}>Sair</button>`}</div></div></div>
+      <div class="row"><div class="when">Escritório</div><div class="main"><strong>${esc(CFG.nome)}</strong><div class="meta"><span>${DEMO ? 'Modo demonstração: dados só neste navegador' : ARTEFATO ? 'Dados guardados na sua conta do Claude' : 'Conectado ao banco do escritório'}</span>${email ? `<span>${esc(email)}</span>` : ''}<span>Versão ${VERSAO}</span></div></div><div class="side"><div class="acts">${DEMO || ARTEFATO ? '' : `<button class="btn sm" ${A('renesc')}>Nome e logo</button><button class="btn sm" ${A('senha')}>Trocar senha</button><button class="btn sm danger" ${A('sair')}>Sair</button>`}</div></div></div>
       <div class="row"><div class="when">Aparência</div><div class="main"><div class="tools">${[['auto', 'Automático'], ['claro', 'Claro'], ['escuro', 'Escuro']].map(([k, t]) => `<button class="chip" aria-pressed="${ui.tema === k}" ${A('tema', k)}>${t}</button>`).join('')}</div></div></div>
       <div class="row"><div class="when">Backup</div><div class="main"><p class="txt">Baixe um arquivo com todos os cadastros. Faça isso toda semana e guarde num lugar seguro. Os arquivos anexados não entram no backup: eles ficam na pasta privada do banco.</p></div><div class="side"><div class="acts"><button class="btn sm" ${A('exportar')}>Exportar backup</button><button class="btn sm" ${A('importar')}>Importar backup</button></div></div></div>
       <div class="row"><div class="when">Ícone do app</div><div class="main"><p class="txt">Escolha a logo quadrada do escritório (ideal 1024 × 1024 px). O sistema gera os arquivos do ícone para a tela de início do celular. Envie esses arquivos para quem cuida da implantação.</p><div class="tools"><label class="f" style="flex:1 1 220px">Cor de fundo do ícone<input type="color" id="ic-cor" value="#1A1A1A" style="height:40px;padding:2px;background:none;border:0"></label><label class="chk"><input type="checkbox" id="ic-mold" checked> Deixar margem (recomendado para Android)</label></div></div><div class="side"><div class="acts"><button class="btn sm" ${A('icones')}>Gerar ícones</button></div></div></div>
@@ -821,7 +824,7 @@ function badges() {
 }
 
 /* ---------------- montagem ---------------- */
-const marcaHTML = () => `<div class="marca">${CFG.logo ? `<img src="${esc(CFG.logo)}" alt="">` : `<span class="sigla">${esc(CFG.sigla)}</span>`}<span class="nome">${esc(CFG.nome)}</span></div>`;
+const marcaHTML = () => `<div class="marca${CFG.logoCliente ? ' cli' : ''}">${CFG.logo ? `<img src="${esc(CFG.logo)}" alt="">` : `<span class="sigla">${esc(CFG.sigla)}</span>`}<span class="nome">${esc(CFG.nome)}</span></div>`;
 function montarShell() {
   document.body.innerHTML = `<div class="app"><aside class="sidebar">${marcaHTML()}<p class="eyebrow">${esc(CFG.subtitulo)}</p><div class="rule" role="presentation"></div><nav aria-label="Seções"><div id="nav"></div></nav><p class="sub">${CFG.rodape ? esc(CFG.rodape) + '<br>' : ''}<span id="hojeTxt"></span></p></aside>
     <div class="wrap"><h1 class="pg" id="pg"></h1>${DEMO ? '<div class="demo"><b>Demonstração do sistema de gestão do Método D.R.A.</b> Os dados são de exemplo e ficam só neste navegador: pode clicar e testar à vontade.</div>' : ''}<main id="view" class="sec"></main></div></div>
@@ -1095,7 +1098,7 @@ async function acao(n, a, b, el) {
       case 'senha': return dialogoSimples('Trocar senha', `<label class="f">Nova senha (mínimo 8 caracteres)<input type="password" name="s1" autocomplete="new-password" required minlength="8"></label><label class="f">Repita a nova senha<input type="password" name="s2" autocomplete="new-password" required></label>`,
         async f => { if (f.s1.value.length < 8) throw new Error('A senha precisa ter pelo menos 8 caracteres.'); if (f.s1.value !== f.s2.value) throw new Error('As senhas não conferem.'); const { error } = await Supa.sb.auth.updateUser({ password: f.s1.value }); if (error) throw error; toast('Senha trocada.'); });
       case 'renesc': return renomearEscritorio(false);
-      case 'sair': if (confirm('Sair do sistema neste aparelho?')) { await Supa.sb.auth.signOut(); location.reload(); } return;
+      case 'sair': if (confirm('Sair do sistema neste aparelho?')) { await Supa.sb.auth.signOut(); LS.removeItem(CHAVE + ':logo'); location.reload(); } return;
     }
   } catch (e) { console.error(e); toast(erroMsg(e)); }
 }
@@ -1174,8 +1177,9 @@ async function iniciarOnline() {
     const { data: u } = await Supa.sb.auth.getUser(); Supa.user = u && u.user;
     const { data, error } = await Supa.sb.rpc('garantir_escritorio', { nome_escritorio: 'Meu escritório' });
     if (error) throw error; Supa.esc = data;
-    const { data: e } = await Supa.sb.from('escritorios').select('nome').eq('id', data).single();
+    const { data: e } = await Supa.sb.from('escritorios').select('nome, logo').eq('id', data).single();
     if (e && e.nome) CFG.nome = e.nome;
+    if (e && e.logo) { CFG.logo = e.logo; CFG.logoCliente = true; LS.setItem(CHAVE + ':logo', e.logo); } else LS.removeItem(CHAVE + ':logo');
     const { data: adm } = await Supa.sb.rpc('sou_admin');
     Supa.admin = adm === true;
     if (Supa.admin && !NAV[NAV.length - 1][1].some(x => x[0] === 'acessos')) NAV[NAV.length - 1][1].unshift(['acessos', 'Acessos']);
@@ -1188,12 +1192,35 @@ async function iniciarOnline() {
   montarShell(); tab = location.hash.slice(1) || 'painel'; render();
   if (CFG.nome === 'Meu escritório') renomearEscritorio(true);
 }
+// Reduz a logo para no máximo 480 px e devolve como data URL (PNG mantém o fundo transparente).
+async function prepararLogo(file) {
+  if (!/^image\//.test(file.type)) throw new Error('Escolha uma imagem (PNG ou JPG).');
+  if (file.size > 8 * 1048576) throw new Error('A imagem é muito grande. Use uma de até 8 MB.');
+  const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('Não consegui ler esta imagem.')); i.src = URL.createObjectURL(file); });
+  const k = Math.min(1, 480 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return /png|svg|webp|gif/.test(file.type) ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.88);
+}
 function renomearEscritorio(primeira) {
-  dialogoSimples(primeira ? 'Bem-vinda! Qual é o nome do seu escritório?' : 'Nome do escritório', `<label class="f">Nome do escritório<input name="nome" value="${esc(CFG.nome === 'Meu escritório' ? '' : CFG.nome)}" required placeholder="Ex.: Souza & Lima Advocacia"></label><p class="note">Aparece no menu e nos relatórios enviados aos clientes. Dá para mudar depois em Ajustes.</p>`, async f => {
+  const atual = CFG.logoCliente ? CFG.logo : '';
+  dialogoSimples(primeira ? 'Bem-vinda! Vamos deixar o sistema com a cara do seu escritório' : 'Nome e logo do escritório', `<label class="f">Nome do escritório<input name="nome" value="${esc(CFG.nome === 'Meu escritório' ? '' : CFG.nome)}" required placeholder="Ex.: Souza & Lima Advocacia"></label>
+    <label class="f">Logo do escritório (opcional)<input type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/svg+xml"></label>
+    <div id="logoPrev" class="logo-prev"${atual ? '' : ' hidden'}>${atual ? `<img src="${esc(atual)}" alt="Logo atual">` : ''}</div>
+    ${atual ? '<label class="chk"><input type="checkbox" name="semlogo"> Tirar a logo e voltar ao símbolo D.R.A.</label>' : ''}
+    <p class="note">O nome aparece no menu e nos relatórios enviados aos clientes. A logo aparece no menu e na tela de entrada. Prefira PNG com fundo transparente. Dá para mudar depois em Ajustes.</p>`, async f => {
     const nome = f.nome.value.trim(); if (!nome) throw new Error('Digite o nome do escritório.');
-    const { error } = await Supa.sb.from('escritorios').update({ nome }).eq('id', Supa.esc); if (error) throw error;
-    CFG.nome = nome; document.querySelectorAll('.marca .nome').forEach(n => n.textContent = nome); toast('Nome salvo.');
+    const dados = { nome };
+    if (f.logo.files[0]) dados.logo = await prepararLogo(f.logo.files[0]);
+    else if (f.semlogo && f.semlogo.checked) dados.logo = null;
+    const { error } = await Supa.sb.from('escritorios').update(dados).eq('id', Supa.esc); if (error) throw error;
+    CFG.nome = nome;
+    if (dados.logo) { CFG.logo = dados.logo; CFG.logoCliente = true; LS.setItem(CHAVE + ':logo', dados.logo); }
+    else if (dados.logo === null) { CFG.logo = CFG.logoPadrao; CFG.logoCliente = false; LS.removeItem(CHAVE + ':logo'); }
+    montarShell(); render(); toast('Escritório atualizado.');
   });
+  const inp = dlg().querySelector('input[name=logo]'), prev = dlg().querySelector('#logoPrev');
+  if (inp) inp.addEventListener('change', async () => { const fl = inp.files[0]; if (!fl) return; try { prev.innerHTML = `<img src="${esc(await prepararLogo(fl))}" alt="Prévia da logo">`; prev.hidden = false; } catch (e) { toast(erroMsg(e)); } });
 }
 
 /* ---------------- início ---------------- */
