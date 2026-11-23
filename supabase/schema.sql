@@ -12,6 +12,8 @@ create table if not exists public.escritorios (
   nome text not null default 'Meu escritório',
   criado_em timestamptz not null default now()
 );
+-- Logo do escritório (imagem reduzida, guardada como data URL).
+alter table public.escritorios add column if not exists logo text;
 
 create table if not exists public.membros (
   escritorio_id uuid not null references public.escritorios(id) on delete cascade,
