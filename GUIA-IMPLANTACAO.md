@@ -15,14 +15,26 @@
 - **Cada mentoranda vê apenas o próprio escritório.** O banco separa os escritórios por regras de acesso (RLS). Uma não enxerga os dados da outra, e o app não mostra os dados delas para você.
 - **No primeiro acesso, o app cria o escritório dela** com as listas sugeridas do quadro e o manual, e pergunta o nome do escritório.
 
-## Liberar uma mentoranda (1 minuto)
+## Liberar uma mentoranda pelo app (1 minuto)
 
-1. Abra o Supabase em **Authentication > Users**.
-2. Clique em **Add user > Send invitation**.
-3. Digite o e-mail dela e envie.
-4. Ela recebe o e-mail, clica no link e cria a senha. Em seguida entra no app e informa o nome do escritório.
+Você é a **administradora**. Por isso, o menu do app mostra para você a seção **Acessos**, que nenhuma mentoranda vê.
 
-Se o link do convite vencer, mande outro convite. Ela também pode usar "Esqueci a senha" na tela de login.
+1. No app, abra **Acessos**.
+2. Digite o nome e o e-mail da mentoranda e clique em **Liberar acesso**.
+3. A mensagem de convite é copiada sozinha. Cole no WhatsApp ou no e-mail dela.
+4. Ela abre o link do app, toca em **"Primeiro acesso? Criar minha senha"**, cria a senha e confirma pelo e-mail que recebe. No primeiro acesso, o app pergunta o nome do escritório.
+
+Na lista de Acessos, você acompanha a situação de cada uma:
+- **liberada, ainda não criou a senha**;
+- **falta confirmar o e-mail**;
+- **cadastrada**;
+- **usando** (aparece o último acesso).
+
+Para tirar o acesso de alguém, clique em **Remover acesso**. Os dados do escritório dela continuam guardados.
+
+**Por que é seguro:** o cadastro só aceita e-mails que estão na sua lista de Acessos (uma trava no banco, criada pelo arquivo `supabase/acessos.sql`). Qualquer outro e-mail recebe a mensagem "Este e-mail ainda não foi liberado".
+
+Também dá para convidar pelo Supabase, em **Authentication > Users > Add user > Send invitation**. Nesse caso, coloque o e-mail na lista de Acessos antes de convidar.
 
 ## Colocar uma secretária no escritório de uma mentoranda
 
@@ -40,7 +52,15 @@ Pronto: ao entrar, a secretária vê o mesmo escritório da mentoranda.
 
 ## Bloquear o acesso de alguém
 
-No Supabase, abra **Authentication > Users**, clique nos três pontos ao lado do usuário e escolha **Delete user**. Os dados do escritório continuam guardados no banco.
+No app, abra **Acessos** e clique em **Remover acesso**. Os dados do escritório continuam guardados no banco.
+
+## Colocar outra administradora
+
+No Supabase, abra **SQL Editor** e rode:
+
+```sql
+insert into public.administradoras (email) values ('email-dela@exemplo.com') on conflict do nothing;
+```
 
 ## Instalar no celular
 
