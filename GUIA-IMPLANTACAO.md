@@ -22,7 +22,11 @@ Você é a **administradora**. Por isso, o menu do app mostra para você a seç�
 1. No app, abra **Acessos**.
 2. Digite o nome e o e-mail da mentoranda e clique em **Liberar acesso**.
 3. A mensagem de convite é copiada sozinha. Cole no WhatsApp ou no e-mail dela.
-4. Ela abre o link do app, toca em **"Primeiro acesso? Criar minha senha"**, cria a senha e confirma pelo e-mail que recebe. No primeiro acesso, o app pergunta o nome do escritório.
+4. Ela abre o link do app, toca em **"Primeiro acesso? Criar minha senha"** e cria a senha. Ela entra na hora, sem depender de e-mail. No primeiro acesso, o app pergunta o nome do escritório.
+
+**Esqueceu a senha?** Em Acessos, clique em **Senha provisória** ao lado do nome dela. O app cria a senha e copia a mensagem pronta para você mandar no WhatsApp. Depois ela troca a senha em Ajustes > Trocar senha.
+
+> O app não depende de e-mail, porque o e-mail gratuito do Supabase só entrega para a equipe do projeto. Por isso a opção **Authentication > Sign In / Providers > Confirm email** deve ficar **desligada**. Quem protege o cadastro é a lista de Acessos.
 
 Na lista de Acessos, você acompanha a situação de cada uma:
 - **liberada, ainda não criou a senha**;
