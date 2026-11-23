@@ -57,6 +57,10 @@ async function copiar(t) { try { await navigator.clipboard.writeText(t); toast('
 function erroMsg(e) {
   const m = (e && (e.message || e.error_description || e.msg)) || String(e);
   if (/Invalid login credentials/i.test(m)) return 'E-mail ou senha incorretos.';
+  if (/EMAIL_NAO_LIBERADO|Database error saving new user/i.test(m)) return 'Este e-mail ainda não foi liberado. Peça o acesso à administradora do sistema.';
+  if (/Signups not allowed|signup.*disabled/i.test(m)) return 'A criação de contas está desligada no momento. Fale com a administradora.';
+  if (/already registered|already been registered/i.test(m)) return 'Este e-mail já tem cadastro. Use "Entrar" ou "Esqueci a senha".';
+  if (/duplicate key|already exists/i.test(m)) return 'Este e-mail já está na lista.';
   if (/Email not confirmed/i.test(m)) return 'Este e-mail ainda não foi confirmado.';
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Sem conexão com a internet. Tente de novo.';
   if (/row-level security|permission denied/i.test(m)) return 'Sem permissão para isso (regra de acesso do banco).';
@@ -666,6 +670,46 @@ async function iaEnviar() {
   IA.ocupado = false; IA.parcial = ''; if (tab === 'assistente') { render(); rola(); }
 }
 
+/* ---------------- acessos (só a administradora) ---------------- */
+const AC = { lista: null, erro: '' };
+async function carregarAcessos() {
+  const { data, error } = await Supa.sb.rpc('lista_acessos');
+  if (error) { AC.erro = erroMsg(error); AC.lista = []; } else { AC.erro = ''; AC.lista = data || []; }
+  if (tab === 'acessos') render();
+}
+const msgConvite = (nome, email) => `Olá${nome ? ', ' + pnome(nome) : ''}! Seu acesso ao Sistema de Gestão do Método D.R.A. está liberado.
+
+1. Abra: ${location.origin + location.pathname}
+2. Toque em "Primeiro acesso? Criar minha senha".
+3. Use este e-mail: ${email}
+4. Crie sua senha e confirme pelo e-mail que vai chegar (olhe também o spam).
+
+Depois, no celular, instale como aplicativo: no iPhone, pelo Safari, Compartilhar > Adicionar à Tela de Início; no Android, pelo Chrome, menu > Instalar app.`;
+V.acessos = {
+  nome: 'Acessos', body() {
+    if (!Supa.admin) return vazio('Somente a administradora vê esta página.', '');
+    if (AC.lista === null) { carregarAcessos(); return vazio('Carregando os acessos…', ''); }
+    const st = a => a.confirmada ? (a.ultimo_acesso ? ['Usando', 'ok'] : ['Cadastrada', 'ok']) : a.cadastrada ? ['Falta confirmar o e-mail', 'warn'] : ['Liberada, ainda não criou a senha', 'info'];
+    return `<p class="note">Libere o e-mail da mentoranda aqui e envie a mensagem de convite. Só quem está nesta lista consegue criar senha. Cada uma vê apenas o próprio escritório.</p>
+      <form class="tools" id="fac"><input type="text" name="nome" placeholder="Nome da mentoranda" aria-label="Nome" style="flex:1 1 200px"><input type="email" name="email" placeholder="E-mail dela" aria-label="E-mail" required style="flex:1 1 240px"><button class="btn pri" type="submit">Liberar acesso</button></form>
+      ${AC.erro ? `<p class="note" style="color:var(--crit)">${esc(AC.erro)}</p>` : ''}
+      <div class="list">${AC.lista.length ? AC.lista.map((a, i) => { const s = st(a); return `<div class="row u-${s[1] === 'ok' ? 'ok' : s[1] === 'warn' ? 'warn' : 'info'}"><div class="when">${esc(fdata(String(a.criado_em).slice(0, 10)))}<small>liberada</small></div>
+        <div class="main"><strong>${esc(a.nome || a.email)}</strong><div class="meta"><span>${esc(a.email)}</span>${a.escritorio ? `<span>${esc(a.escritorio)}</span>` : ''}${a.ultimo_acesso ? `<span>último acesso ${esc(fdata(String(a.ultimo_acesso).slice(0, 10)))}</span>` : ''}</div></div>
+        <div class="side"><span class="pill ${s[1]}">${esc(s[0])}</span><div class="acts"><button class="btn sm" ${A('acmsg', i)}>Copiar convite</button><button class="btn sm danger" ${A('acrem', i)}>Remover acesso</button></div></div></div>`; }).join('') : '<div class="empty">Nenhum acesso liberado ainda.</div>'}</div>`;
+  }
+};
+document.addEventListener('submit', async e => {
+  if (!e.target || e.target.id !== 'fac') return; e.preventDefault();
+  const f = e.target, email = f.email.value.trim().toLowerCase(), nome = f.nome.value.trim(), b = f.querySelector('button'); if (!email) return;
+  b.disabled = true;
+  try {
+    const { error } = await Supa.sb.from('convites').insert({ email, nome: nome || null, convidado_por: Supa.user ? Supa.user.email : null });
+    if (error) throw error;
+    await copiar(msgConvite(nome, email)); toast('Acesso liberado. A mensagem de convite foi copiada: cole no WhatsApp ou no e-mail dela.');
+    AC.lista = null; render();
+  } catch (ex) { AC.erro = erroMsg(ex); render(); }
+});
+
 /* ---------------- relatórios mensais (um rascunho de mensagem por cliente) ---------------- */
 const SEMCLI = 'Sem cliente vinculado';
 const feitos = () => S.compromissos.filter(c => c.status === 'feito');
@@ -1002,6 +1046,13 @@ async function acao(n, a, b, el) {
       case 'dia': ui.cd = a; if (mesDe(a) !== ui.cm) ui.cm = mesDe(a); return render();
       case 'mes': ui.cm = +a === 0 ? mesDe(hoje()) : somaMes(ui.cm, +a); if (+a === 0) ui.cd = hoje(); return render();
       case 'mesfin': ui.mf = somaMes(ui.mf, +a); return render();
+      case 'acmsg': { const x = AC.lista[+a]; return copiar(msgConvite(x.nome, x.email)); }
+      case 'acrem': {
+        const x = AC.lista[+a];
+        if (!confirm('Remover o acesso de ' + (x.nome || x.email) + '? Ela não vai mais conseguir entrar. Os dados do escritório dela ficam guardados.')) return;
+        const { error } = await Supa.sb.rpc('remover_acesso', { alvo: x.email }); if (error) throw error;
+        toast('Acesso removido.'); AC.lista = null; return render();
+      }
       case 'ia': return iaEnviar();
       case 'ialimpa': IA.msgs = []; return render();
       case 'mesrel': ui.mr = somaMes(ui.mr, +a); return render();
@@ -1075,7 +1126,8 @@ function ligarEventos() {
 /* ---------------- login ---------------- */
 function telaLogin(modo = 'entrar', msg = '') {
   document.body.innerHTML = `<div class="login"><div class="caixa">${marcaHTML()}<p class="eyebrow">${esc(CFG.subtitulo)}</p><div class="rule"></div>
-    ${modo === 'entrar' ? `<form id="fl"><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><label class="f">Senha<input type="password" name="senha" autocomplete="current-password" required></label><p class="err"${msg ? '' : ' hidden'}>${esc(msg)}</p><button class="btn pri" type="submit">Entrar</button></form><button class="lnk" id="esq" type="button">Esqueci a senha</button>`
+    ${modo === 'entrar' ? `<form id="fl"><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><label class="f">Senha<input type="password" name="senha" autocomplete="current-password" required></label><p class="err"${msg ? '' : ' hidden'}>${esc(msg)}</p><button class="btn pri" type="submit">Entrar</button></form><button class="lnk" id="esq" type="button">Esqueci a senha</button><button class="lnk" id="cria" type="button">Primeiro acesso? Criar minha senha</button>`
+    : modo === 'criar' ? `<form id="fc"><p class="note">Use o e-mail que foi liberado para você e crie sua senha (mínimo 8 caracteres).</p><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><label class="f">Senha<input type="password" name="s1" autocomplete="new-password" required minlength="8"></label><label class="f">Repita a senha<input type="password" name="s2" autocomplete="new-password" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Criar acesso</button></form><button class="lnk" id="volta" type="button">Já tenho senha</button>`
     : modo === 'esqueci' ? `<form id="fe"><p class="note">Digite seu e-mail. Você vai receber um link para criar uma senha nova.</p><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Enviar link</button></form><button class="lnk" id="volta" type="button">Voltar</button>`
     : `<form id="fn"><p class="note">${/type=invite/.test(location.hash) ? 'Bem-vinda! Crie sua senha de acesso (mínimo 8 caracteres).' : 'Crie sua senha nova (mínimo 8 caracteres).'}</p><label class="f">Nova senha<input type="password" name="s1" autocomplete="new-password" required minlength="8"></label><label class="f">Repita<input type="password" name="s2" autocomplete="new-password" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Salvar e entrar</button></form>`}
     </div></div><div id="toast" role="status" hidden></div>`;
@@ -1085,6 +1137,16 @@ function telaLogin(modo = 'entrar', msg = '') {
     e.preventDefault(); const b = f.querySelector('button[type=submit]'); b.disabled = true;
     try {
       if (modo === 'entrar') { const { error } = await Supa.sb.auth.signInWithPassword({ email: f.email.value.trim(), password: f.senha.value }); if (error) throw error; return iniciarOnline(); }
+      if (modo === 'criar') {
+        if (f.s1.value.length < 8) throw new Error('A senha precisa ter pelo menos 8 caracteres.');
+        if (f.s1.value !== f.s2.value) throw new Error('As senhas não conferem.');
+        const email = f.email.value.trim();
+        const { data, error } = await Supa.sb.auth.signUp({ email, password: f.s1.value, options: { emailRedirectTo: location.origin + location.pathname } });
+        if (error) throw error;
+        if (data && data.session) return iniciarOnline();
+        if (data && data.user && Array.isArray(data.user.identities) && !data.user.identities.length) throw new Error('already registered');
+        return telaLogin('entrar', 'Quase lá! Enviamos um e-mail de confirmação para ' + email + '. Clique no link do e-mail e depois entre aqui com sua senha. Confira também o spam.');
+      }
       if (modo === 'esqueci') { const { error } = await Supa.sb.auth.resetPasswordForEmail(f.email.value.trim(), { redirectTo: location.origin + location.pathname }); if (error) throw error; return telaLogin('entrar', 'Se o e-mail estiver cadastrado, o link chega em alguns minutos. Confira também o spam.'); }
       if (f.s1.value.length < 8) throw new Error('A senha precisa ter pelo menos 8 caracteres.');
       if (f.s1.value !== f.s2.value) throw new Error('As senhas não conferem.');
@@ -1094,6 +1156,7 @@ function telaLogin(modo = 'entrar', msg = '') {
   });
   const esq = $('#esq'); if (esq) esq.onclick = () => telaLogin('esqueci');
   const vol = $('#volta'); if (vol) vol.onclick = () => telaLogin('entrar');
+  const cri = $('#cria'); if (cri) cri.onclick = () => telaLogin('criar');
 }
 async function iniciarOnline() {
   document.body.innerHTML = '<div class="carregando">Abrindo o escritório…</div>';
@@ -1103,6 +1166,9 @@ async function iniciarOnline() {
     if (error) throw error; Supa.esc = data;
     const { data: e } = await Supa.sb.from('escritorios').select('nome').eq('id', data).single();
     if (e && e.nome) CFG.nome = e.nome;
+    const { data: adm } = await Supa.sb.rpc('sou_admin');
+    Supa.admin = adm === true;
+    if (Supa.admin && !NAV[NAV.length - 1][1].some(x => x[0] === 'acessos')) NAV[NAV.length - 1][1].unshift(['acessos', 'Acessos']);
     await carregarTudo();
   } catch (e) {
     console.error(e);
