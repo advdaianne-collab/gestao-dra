@@ -720,6 +720,13 @@ V.kit = {
   }
 };
 
+document.addEventListener('change', async e => {
+  const inp = e.target; if (!inp || inp.id !== 'kitArq' || !inp.files.length) return;
+  toast('Enviando o kit…');
+  try { const r = await atualizarKit([...inp.files]); toast(`Kit atualizado: ${r.arquivos} arquivo(s) e ${r.itens} item(ns).`); KIT.itens = null; render(); }
+  catch (ex) { toast(erroMsg(ex)); }
+});
+
 /* ---------------- acessos (só a administradora) ---------------- */
 const AC = { lista: null, erro: '' };
 async function carregarAcessos() {
@@ -1098,11 +1105,7 @@ async function acao(n, a, b, el) {
       case 'mesfin': ui.mf = somaMes(ui.mf, +a); return render();
       case 'kitcopia': { const x = (KIT.itens || []).find(k => k.id === a); return copiar(x ? x.conteudo : ''); }
       case 'kitbaixa': return baixarKit(a);
-      case 'kitenvia': {
-        const inp = $('#kitArq'); inp.value = '';
-        inp.onchange = async () => { if (!inp.files.length) return; toast('Enviando o kit…'); try { const r = await atualizarKit([...inp.files]); toast(`Kit atualizado: ${r.arquivos} arquivo(s) e ${r.itens} item(ns).`); KIT.itens = null; render(); } catch (e) { toast(erroMsg(e)); } };
-        return inp.click();
-      }
+      case 'kitenvia': { const inp = $('#kitArq'); inp.value = ''; return inp.click(); }
       case 'acmsg': { const x = AC.lista[+a]; return copiar(msgConvite(x.nome, x.email)); }
       case 'acsenha': {
         const x = AC.lista[+a];
