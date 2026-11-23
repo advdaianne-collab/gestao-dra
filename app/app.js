@@ -682,7 +682,7 @@ const msgConvite = (nome, email) => `Olá${nome ? ', ' + pnome(nome) : ''}! Seu 
 1. Abra: ${location.origin + location.pathname}
 2. Toque em "Primeiro acesso? Criar minha senha".
 3. Use este e-mail: ${email}
-4. Crie sua senha e confirme pelo e-mail que vai chegar (olhe também o spam).
+4. Crie sua senha. Pronto, você já entra no seu escritório.
 
 Depois, no celular, instale como aplicativo: no iPhone, pelo Safari, Compartilhar > Adicionar à Tela de Início; no Android, pelo Chrome, menu > Instalar app.`;
 V.acessos = {
@@ -695,7 +695,7 @@ V.acessos = {
       ${AC.erro ? `<p class="note" style="color:var(--crit)">${esc(AC.erro)}</p>` : ''}
       <div class="list">${AC.lista.length ? AC.lista.map((a, i) => { const s = st(a); return `<div class="row u-${s[1] === 'ok' ? 'ok' : s[1] === 'warn' ? 'warn' : 'info'}"><div class="when">${esc(fdata(String(a.criado_em).slice(0, 10)))}<small>liberada</small></div>
         <div class="main"><strong>${esc(a.nome || a.email)}</strong><div class="meta"><span>${esc(a.email)}</span>${a.escritorio ? `<span>${esc(a.escritorio)}</span>` : ''}${a.ultimo_acesso ? `<span>último acesso ${esc(fdata(String(a.ultimo_acesso).slice(0, 10)))}</span>` : ''}</div></div>
-        <div class="side"><span class="pill ${s[1]}">${esc(s[0])}</span><div class="acts"><button class="btn sm" ${A('acmsg', i)}>Copiar convite</button><button class="btn sm danger" ${A('acrem', i)}>Remover acesso</button></div></div></div>`; }).join('') : '<div class="empty">Nenhum acesso liberado ainda.</div>'}</div>`;
+        <div class="side"><span class="pill ${s[1]}">${esc(s[0])}</span><div class="acts"><button class="btn sm" ${A('acmsg', i)}>Copiar convite</button>${a.cadastrada ? `<button class="btn sm" ${A('acsenha', i)}>Senha provisória</button>` : ''}<button class="btn sm danger" ${A('acrem', i)}>Remover acesso</button></div></div></div>`; }).join('') : '<div class="empty">Nenhum acesso liberado ainda.</div>'}</div>`;
   }
 };
 document.addEventListener('submit', async e => {
@@ -1047,6 +1047,16 @@ async function acao(n, a, b, el) {
       case 'mes': ui.cm = +a === 0 ? mesDe(hoje()) : somaMes(ui.cm, +a); if (+a === 0) ui.cd = hoje(); return render();
       case 'mesfin': ui.mf = somaMes(ui.mf, +a); return render();
       case 'acmsg': { const x = AC.lista[+a]; return copiar(msgConvite(x.nome, x.email)); }
+      case 'acsenha': {
+        const x = AC.lista[+a];
+        if (!confirm('Criar uma senha provisória para ' + (x.nome || x.email) + '? A senha atual dela deixa de funcionar.')) return;
+        const abc = 'abcdefghjkmnpqrstuvwxyz23456789', r = new Uint32Array(10); crypto.getRandomValues(r);
+        const nova = Array.from(r, n => abc[n % abc.length]).join('');
+        const { error } = await Supa.sb.rpc('redefinir_senha', { alvo: x.email, nova }); if (error) throw error;
+        const txt = `Olá${x.nome ? ', ' + pnome(x.nome) : ''}! Sua senha provisória do Sistema de Gestão D.R.A. é: ${nova}\n\nEntre em ${location.origin + location.pathname} com o e-mail ${x.email} e essa senha. Depois troque em Ajustes > Trocar senha.`;
+        await copiar(txt);
+        return dialogoSimples('Senha provisória criada', `<p class="note">A mensagem abaixo já foi copiada. Cole no WhatsApp dela.</p><p class="txt pre" style="background:var(--surface-2);padding:12px;border-radius:10px">${esc(txt)}</p>`, null);
+      }
       case 'acrem': {
         const x = AC.lista[+a];
         if (!confirm('Remover o acesso de ' + (x.nome || x.email) + '? Ela não vai mais conseguir entrar. Os dados do escritório dela ficam guardados.')) return;
@@ -1128,12 +1138,12 @@ function telaLogin(modo = 'entrar', msg = '') {
   document.body.innerHTML = `<div class="login"><div class="caixa">${marcaHTML()}<p class="eyebrow">${esc(CFG.subtitulo)}</p><div class="rule"></div>
     ${modo === 'entrar' ? `<form id="fl"><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><label class="f">Senha<input type="password" name="senha" autocomplete="current-password" required></label><p class="err"${msg ? '' : ' hidden'}>${esc(msg)}</p><button class="btn pri" type="submit">Entrar</button></form><button class="lnk" id="esq" type="button">Esqueci a senha</button><button class="lnk" id="cria" type="button">Primeiro acesso? Criar minha senha</button>`
     : modo === 'criar' ? `<form id="fc"><p class="note">Use o e-mail que foi liberado para você e crie sua senha (mínimo 8 caracteres).</p><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><label class="f">Senha<input type="password" name="s1" autocomplete="new-password" required minlength="8"></label><label class="f">Repita a senha<input type="password" name="s2" autocomplete="new-password" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Criar acesso</button></form><button class="lnk" id="volta" type="button">Já tenho senha</button>`
-    : modo === 'esqueci' ? `<form id="fe"><p class="note">Digite seu e-mail. Você vai receber um link para criar uma senha nova.</p><label class="f">E-mail<input type="email" name="email" autocomplete="username" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Enviar link</button></form><button class="lnk" id="volta" type="button">Voltar</button>`
+    : modo === 'esqueci' ? `<div><p class="note"><b>Esqueceu a senha?</b> Peça à administradora do sistema uma <b>senha provisória</b> pelo WhatsApp. Entre com ela e depois troque em Ajustes &gt; Trocar senha.</p><p class="note">Ainda não tem senha? Volte e toque em "Primeiro acesso".</p></div><button class="lnk" id="volta" type="button">Voltar</button>`
     : `<form id="fn"><p class="note">${/type=invite/.test(location.hash) ? 'Bem-vinda! Crie sua senha de acesso (mínimo 8 caracteres).' : 'Crie sua senha nova (mínimo 8 caracteres).'}</p><label class="f">Nova senha<input type="password" name="s1" autocomplete="new-password" required minlength="8"></label><label class="f">Repita<input type="password" name="s2" autocomplete="new-password" required></label><p class="err" hidden></p><button class="btn pri" type="submit">Salvar e entrar</button></form>`}
     </div></div><div id="toast" role="status" hidden></div>`;
   const err = m => { const p = document.querySelector('.err'); p.textContent = m; p.hidden = false; };
   const f = document.querySelector('form');
-  f.addEventListener('submit', async e => {
+  if (f) f.addEventListener('submit', async e => {
     e.preventDefault(); const b = f.querySelector('button[type=submit]'); b.disabled = true;
     try {
       if (modo === 'entrar') { const { error } = await Supa.sb.auth.signInWithPassword({ email: f.email.value.trim(), password: f.senha.value }); if (error) throw error; return iniciarOnline(); }
